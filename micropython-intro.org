@@ -1,0 +1,299 @@
+#+STARTUP: hidestars showall 
+#+OPTIONS: ^:nil toc:nil num:nil html-postamble:nil
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="dov-org.css" />
+#+AUTHOR: Dov Grobgeld
+#+TITLE: micropython and rp2040-presentation
+#+DATE: 2024-11-19 Tue
+
+* Micropython
+
+  - Supported by lots of microcontrollers
+  - Subset of python (but surprisingly large!)
+  - CPU's mentioned today:
+    - RP2040 and RP2350 - produced by the raspberry pi foundation
+    - ESP8266 and ESP32 - produced by the company Espressif
+  - Alternative to Arduino programming
+
+* RP2040 spec
+
+  - Amazingly good documentation!
+  - Dual Arm Cortex-M0+, flexible clock up to 133 MHz
+  - 264kB on-chip SRAM
+  - 2 × UART, 2 × SPI controllers, 2 × I2C controllers, 16 × PWM channels
+  - 1 × USB 1.1 controller and PHY, with host and device support
+  - 8 × Programmable I/O (PIO) state machines for custom peripheral support
+  - Programmable in C/C++, Lua, and Micropython
+  - Price: ~5 USD
+  - Lacks Wifi! (Which ESP8266 and ESP32 have)
+
+* Quick electronics 1. - How to turn on a LED
+  - Turning on a LED is the "Hello world" of electronics
+  - Binary general purpose I/O pins outputs either 0 (GND) or 1 (+V)
+  - For RPxxxx and ESPxxxx V=3.3V
+  - Circuit for turning on a LED
+
+  [[file:turn-on-led.png]]
+
+* Quick electronics 2. - Breadboard
+
+[[file:bread-board.svg]]
+
+* Programming RP2040 (burning)
+
+  - Press button BOOTSEL and connect to USB
+  - A new disk drive automatically appears
+  - Copy an UF2 file
+  - Once file has been copied the RP2040 automatically reboots
+
+* MicroPython
+
+  - A simplified version of python for microcontrollers
+  - Install by copying the UF2 file
+  - Scripts are kept on local file system
+  - Special script ~main.py~ is run on reboot
+  - Provides an interactive shell
+
+* pimoroni explorer board
+
+  - Comes with several IO's connected and other hardware
+  - Comes with custom micropython with additional hardware support
+  - For final project, may solder or us smaller RP2040 board
+  
+* Thonny python editor
+
+  - Simple editor for learners of python
+  - Comes with micropython integration
+  - Need to configure port and bord
+
+* Terminal - Turn on the built in led
+
+#+begin_src python
+import machine
+pin = machine.Pin(0, machine.Pin.OUT)
+pin.value(0)
+pin.value(1)
+#+end_src
+
+* Explorer goodies
+
+  - Graphics hello world:
+  #+begin_src python
+from picographics import PicoGraphics, DISPLAY_PICO_EXPLORER
+display = PicoGraphics(display = DISPLAY_PICO_EXPLORER)
+
+width, height = display.get_bounds()
+WHITE= display.create_pen(255,255,255)
+
+display.set_pen(WHITE)
+display.text('Hello world', 3,3,0,3)
+display.update()
+  #+end_src
+
+* Other micropython boards
+   - ESP-12E with ESP8266 - Cheapest, bring your own serial dongle
+   - D1Mini - with USB port. 6 NIS
+   - M5 Stack
+     - Lots of ESP32 enclosures
+     - M5 Atom -
+
+* Communications protocols
+
+  - Predefined libraries for common micro controller protocols:
+    - UART - Serial
+    - I2C 
+    - SPI
+  - Wifi
+    - Need helper chip for RPxxxx (often ESP-8266 ☺ )
+    - Out of the box
+
+* Example read UART input
+  
+#+begin_src python
+from machine import UART, Pin
+import time
+
+uart0 = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1))
+rxData = bytes()
+while uart0.any() > 0:
+    rxData += uart0.read(1)
+
+print(rxData.decode('utf-8'))
+#+end_src
+
+  - Sending UART from M5Stack
+    - GND
+    - White to GP0
+    - Yellow to GP1
+
+* Servo motor
+  - Pin configuration:
+    - Red → 3V3
+    - Brown → GND
+    - Orange (signal) → 0
+
+  - Example of included library
+#+begin_src python
+from servo import Servo
+import time
+
+sm = Servo(pin=0)
+
+for i in range(10):
+    sm.value(90*(i%2))
+    time.sleep(1)
+#+end_src
+
+* LED panel
+
+  - Another included library neopixel
+#+begin_src python
+import neopixel
+from machine import Pin
+import time
+
+ws_pin = 0  # GP0
+led_num = 64
+BRIGHTNESS = 0.2  # Adjust the brightness (0.0 - 1.0)
+
+neoPanel = neopixel.NeoPixel(Pin(ws_pin), led_num)
+
+neoPanel.fill((0,10,0))
+neoPanel.write()
+
+for pixel in (0,7,63,63-7):
+  neoPanel[pixel] = (255,0,0)
+neoPanel.write()
+#+end_src
+
+* wifi
+
+  - Example on the d1 mini (6.5 NIS)
+#+begin_src python
+import network, ubinascii
+sta_if = network.WLAN(network.STA_IF)
+ap_if = network.WLAN(network.AP_IF)
+ap_if.active(False)
+sta_if.active(True)
+sta_if.connect(WIS Guest,'')
+sta_if.isconnected()
+
+# Interactive
+print(ubinascii.hexlify(network.WLAN().config('mac'),':').decode())
+sta_if.ifconfig()
+#+end_src
+
+* http queries
+
+  - Almost like in standard python
+  #+begin_src python
+import urequests
+
+# Query a public api
+astronauts = urequests.get("http://api.open-notify.org/astros.json").json()
+number = astronauts['number']
+print('There are', number, 'astronauts in space.')
+for i in range(number):
+    print(i+1, astronauts['people'][i]['name'])
+  #+end_src
+
+* PIO
+
+  - State machine for high resolution - accurate timed protocols
+  - Simplest example blink
+  - Can set frequency, slowest frequency is 2000 Hz
+  - Need lots of delays to slow it down to 1Hz
+  - Assembly code described in python syntax
+
+  #+begin_src python
+import time
+from machine import Pin
+import rp2
+
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def blink_1hz():
+    # Cycles: 1 + 1 + 6 + 32 * (30 + 1) = 1000
+    irq(rel(0))
+    set(pins, 1)
+    set(x, 31)                  [5]
+    label("delay_high")
+    nop()                       [29]
+    jmp(x_dec, "delay_high")
+
+    # Cycles: 1 + 7 + 32 * (30 + 1) = 1000
+    set(pins, 0)
+    set(x, 31)                  [6]
+    label("delay_low")
+    nop()                       [29]
+    jmp(x_dec, "delay_low")
+
+
+# Create the StateMachine with the blink_1hz program, outputting on GP0.
+sm = rp2.StateMachine(0, blink_1hz, freq=2000, set_base=Pin(0))
+
+# Set the IRQ handler to print the millisecond timestamp.
+sm.irq(lambda p: print(time.ticks_ms()))
+
+# Start the StateMachine.
+sm.active(1)
+  #+end_src
+
+* PIO for ws2812b
+
+  - More complex example
+  - Let's do ws2812 on our own!
+  - One channel protocol with accurate timing
+  - ws2812b protocol description: https://cdn-shop.adafruit.com/datasheets/WS2812B.pdf
+  - pio example:
+#+begin_src python
+import array, time
+from machine import Pin
+import rp2
+
+# Configure the number of WS2812 LEDs.
+PANEL_NUM_COLUMNS=8
+NUM_LEDS = 8*PANEL_NUM_COLUMNS
+
+@rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=24)
+def ws2812():
+    T1 = 2
+    T2 = 5
+    T3 = 3
+    wrap_target()
+    label("bitloop")
+    out(x, 1)               .side(0)    [T3 - 1]  # 0.375us off
+    jmp(not_x, "do_zero")   .side(1)    [T1 - 1]  # 0.25us on
+    jmp("bitloop")          .side(1)    [T2 - 1]  # bit 1 -> 0.625 on
+    label("do_zero")
+    nop()                   .side(0)    [T2 - 1]  # bit 0 -> 0.625 off
+    wrap()
+
+
+# Create the StateMachine with the ws2812 program, outputting on Pin(22).
+sm = rp2.StateMachine(0, ws2812, freq=8_000_000, sideset_base=Pin(0))
+
+# Start the StateMachine, it will wait for data on its FIFO.
+sm.active(1)
+
+# Display a pattern on the LEDs via an array of LED RGB values.
+ar = array.array("I", [0 for _ in range(NUM_LEDS)])
+
+sleep_time_in_ms = 200
+
+smiley = [
+0,0,1,1,1,1,0,0,
+0,1,0,0,0,0,0,0,
+1,0,1,0,0,1,0,1,
+1,0,0,0,0,0,0,1,
+1,0,1,0,0,1,0,1,
+1,0,0,1,1,0,0,1,
+0,1,0,0,0,0,1,0,
+0,0,1,1,1,1,0,0]
+
+ar = array.array('I', 
+  [sm*0x0f0000 for sm in smiley])
+  
+while True:
+  sm.put(ar)
+  time.sleep_ms(sleep_time_in_ms)
+#+end_src
+
