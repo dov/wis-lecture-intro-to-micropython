@@ -3,16 +3,28 @@
 #+HTML_HEAD: <link rel="stylesheet" type="text/css" href="dov-org.css" />
 #+AUTHOR: Dov Grobgeld
 #+TITLE: micropython and rp2040-presentation
-#+DATE: 2024-11-19 Tue
+#+DATE: 2024-12-19 Thu
+
+* Abstract
+
+In this lecture I will give an introduction to MicroPython on some common microcontroller boards using the RP2040 and ESP32 (and related) microcontrollers. I will give a live demonstration of how to burn MicroPython to the boards, how to use the free software Thonny to interact with the boards, as well as uploading and running micropython programs on the boards. I will discuss various ways of controlling the boards remotely and I will give a quick introduction to electronics, and show how to interface with various external hardware. 
 
 * Micropython
 
   - Supported by lots of microcontrollers
   - Subset of python (but surprisingly large!)
   - CPU's mentioned today:
-    - RP2040 and RP2350 - produced by the raspberry pi foundation
+    - RP2040 and RP2350 - produced by the Raspberry pi foundation
     - ESP8266 and ESP32 - produced by the company Espressif
   - Alternative to Arduino programming
+
+* Why MicroPython and not Arduino?
+
+  - Uploading (burning) on Arduino is slow
+  - You only need to upload micropython once.
+  - REPL interface is great for debugging
+  - Flexibility of python
+  - If needed, can create custom micropython versions with binding to C/C++ libraries
 
 * RP2040 spec
 
@@ -27,6 +39,7 @@
   - Lacks Wifi! (Which ESP8266 and ESP32 have)
 
 * Quick electronics 1. - How to turn on a LED
+
   - Turning on a LED is the "Hello world" of electronics
   - Binary general purpose I/O pins outputs either 0 (GND) or 1 (+V)
   - For RPxxxx and ESPxxxx V=3.3V
@@ -44,6 +57,7 @@
   - A new disk drive automatically appears
   - Copy an UF2 file
   - Once file has been copied the RP2040 automatically reboots
+  - On espXX boards, use esptool.py
 
 * MicroPython
 
@@ -74,20 +88,23 @@ pin.value(0)
 pin.value(1)
 #+end_src
 
-* Explorer goodies
+* Explorer builtin libraries
 
   - Graphics hello world:
   #+begin_src python
 from picographics import PicoGraphics, DISPLAY_PICO_EXPLORER
 display = PicoGraphics(display = DISPLAY_PICO_EXPLORER)
 
-width, height = display.get_bounds()
 WHITE= display.create_pen(255,255,255)
 
 display.set_pen(WHITE)
-display.text('Hello world', 3,3,0,3)
+display.set_font('bitmap8')
+display.text('Hello', 3,3,scale=8)
+display.text('WIS!',3,100,scale=10)
 display.update()
   #+end_src
+
+  #+RESULTS:
 
 * Other micropython boards
    - ESP-12E with ESP8266 - Cheapest, bring your own serial dongle
@@ -107,6 +124,10 @@ display.update()
     - Out of the box
 
 * Example read UART input
+  - Setup: Sending UART from M5Stack
+    - Black → GND 
+    - White → GP0
+    - Yellow → GP1
   
 #+begin_src python
 from machine import UART, Pin
@@ -120,16 +141,11 @@ while uart0.any() > 0:
 print(rxData.decode('utf-8'))
 #+end_src
 
-  - Sending UART from M5Stack
-    - GND
-    - White to GP0
-    - Yellow to GP1
-
 * Servo motor
   - Pin configuration:
     - Red → 3V3
     - Brown → GND
-    - Orange (signal) → 0
+    - Orange (signal) → GP0
 
   - Example of included library
 #+begin_src python
@@ -144,6 +160,10 @@ for i in range(10):
 #+end_src
 
 * LED panel
+  - Setup:
+    - Brown → 3V3  
+    - White → GND
+    - Green → GP0
 
   - Another included library neopixel
 #+begin_src python
@@ -157,12 +177,11 @@ BRIGHTNESS = 0.2  # Adjust the brightness (0.0 - 1.0)
 
 neoPanel = neopixel.NeoPixel(Pin(ws_pin), led_num)
 
-neoPanel.fill((0,10,0))
-neoPanel.write()
-
-for pixel in (0,7,63,63-7):
-  neoPanel[pixel] = (255,0,0)
-neoPanel.write()
+for i in range(64*5):
+  neoPanel.fill((0,10,0))
+  neoPanel[i%64] = (255,0,0)
+  neoPanel.write()
+  time.sleep_ms(100)
 #+end_src
 
 * wifi
@@ -174,7 +193,7 @@ sta_if = network.WLAN(network.STA_IF)
 ap_if = network.WLAN(network.AP_IF)
 ap_if.active(False)
 sta_if.active(True)
-sta_if.connect(WIS Guest,'')
+sta_if.connect('WIS Guest','')
 sta_if.isconnected()
 
 # Interactive
@@ -196,6 +215,57 @@ for i in range(number):
     print(i+1, astronauts['people'][i]['name'])
   #+end_src
 
+* Remote controlling a mqtt device
+
+- Several options for wifi remote control
+  - webrepl - REPL but over http
+  - Create http web server by low level sockets
+  - MQTT 
+    - The protocol of IOT. ~import umqtt~
+    - Need to setup a MQTT broker (or use a free one/rent one on the Internet)
+    - All IOT devices connect to broker and subscribe to a "topic"
+  - Telegram client - (json based)  
+
+* Connecting from a PC host
+  - E.g. when wifi connections are not allowed...
+  - How to control from a PC program?
+  - Connect by pyserial and send and read text
+  - Another option is to use UART
+  - Note: need to disconnect thonny
+#+begin_src python
+#!/usr/bin/env python3
+######################################################################
+# An example of how to talk to micropython through pyserial.
+# (This is *not* a micropython program.
+#
+#  2024-12-10 Tue
+#######################################################################
+
+import time, serial
+
+def read_until_prompt(ser):
+    '''Read everything up to the prompt character and return it'''
+    res = b''
+    while(1):
+        ch = ser.read(1)
+        if len(ch):
+            res += ch
+            if res.endswith(b'>>> '):
+                break
+        else:
+            time.sleep(0.01)
+    return res[:-6].decode().replace('\r','')  # Get rid of prompt and \r
+          
+with serial.Serial('/dev/ttyUSB1', 115200, timeout=0) as ser:
+  ser.write(b'\x0c\r') # Send Ctrl-c to interrupt to clear state
+  res = read_until_prompt(ser)
+  ser.write('3+5\r')
+  res = read_until_prompt(ser)
+  print(f'{res=}')
+
+  print(res)
+#+end_src
+  
 * PIO
 
   - State machine for high resolution - accurate timed protocols
@@ -268,7 +338,7 @@ def ws2812():
     wrap()
 
 
-# Create the StateMachine with the ws2812 program, outputting on Pin(22).
+# Create the StateMachine with the ws2812 program, outputting on Pin(0).
 sm = rp2.StateMachine(0, ws2812, freq=8_000_000, sideset_base=Pin(0))
 
 # Start the StateMachine, it will wait for data on its FIFO.
@@ -281,7 +351,7 @@ sleep_time_in_ms = 200
 
 smiley = [
 0,0,1,1,1,1,0,0,
-0,1,0,0,0,0,0,0,
+0,1,0,0,0,0,1,0,
 1,0,1,0,0,1,0,1,
 1,0,0,0,0,0,0,1,
 1,0,1,0,0,1,0,1,
@@ -289,11 +359,17 @@ smiley = [
 0,1,0,0,0,0,1,0,
 0,0,1,1,1,1,0,0]
 
-ar = array.array('I', 
-  [sm*0x0f0000 for sm in smiley])
+for i in range(10):
+  ar = array.array('I', 
+    [(sm if i%2 else 1-sm)*0x0f0f0000 for sm in smiley])
   
-while True:
   sm.put(ar)
-  time.sleep_ms(sleep_time_in_ms)
+  time.sleep(0.1)
 #+end_src
 
+* References
+  - https://www.raspberrypi.com/products/rp2350 - Official home page with documentation
+  - https://shop.pimoroni.com/products/pico-explorer-base - Pimoroni explorer
+  - https://micropython.org/ - Micropython home page
+  - https://m5stack.com/ - ESP32 modules - Also available on Ali-Express
+  
